@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-AMPED PDF Generator v3.0 - Production Ready
+AMPED PDF Generator v3.1 - Production Ready (Railway Optimized)
 Converts HTML electrical drawings to professional PDFs
 Supports white-labeling for all trades (electrical, HVAC, flooring, plumbing)
+NO system dependencies required (Cairo-free)
 """
 
 from flask import Flask, request, jsonify, send_file
@@ -10,7 +11,7 @@ import logging
 from datetime import datetime
 import os
 import io
-from xhtml2pdf import pisa
+from weasyprint import HTML, CSS
 
 # Configure logging
 logging.basicConfig(
@@ -71,20 +72,13 @@ def inject_trade_branding(html_content, trade_config):
     return html_content
 
 def convert_html_to_pdf(html_content):
-    """Convert HTML to PDF using xhtml2pdf"""
+    """Convert HTML to PDF using WeasyPrint (no Cairo dependency)"""
     try:
         # Create PDF buffer
         pdf_buffer = io.BytesIO()
         
         # Convert HTML to PDF
-        pisa_status = pisa.CreatePDF(
-            html_content,
-            dest=pdf_buffer,
-            encoding='utf-8'
-        )
-        
-        if pisa_status.err:
-            raise Exception(f"PDF conversion error: {pisa_status.err}")
+        HTML(string=html_content).write_pdf(pdf_buffer)
         
         pdf_buffer.seek(0)
         return pdf_buffer
@@ -103,7 +97,7 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "AMPED PDF Generator",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "timestamp": datetime.now().isoformat()
     }), 200
 
@@ -172,7 +166,7 @@ def api_info():
     """API information endpoint"""
     return jsonify({
         "service": "AMPED PDF Generator",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "endpoints": {
             "health": "/health",
             "generate_pdf": "/generate-pdf",
