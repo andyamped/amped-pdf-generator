@@ -1,223 +1,210 @@
-import os
-import json
+#!/usr/bin/env python3
+"""
+AMPED PDF Generator v3.0 - Production Ready
+Converts HTML electrical drawings to professional PDFs
+Supports white-labeling for all trades (electrical, HVAC, flooring, plumbing)
+"""
+
+from flask import Flask, request, jsonify, send_file
 import logging
-from io import BytesIO
-from flask import Flask, request, send_file, jsonify
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.lib.units import inch
-from reportlab.pdfgen import canvas
-from reportlab.lib import colors
 from datetime import datetime
+import os
+import io
+from xhtml2pdf import pisa
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 
-def parse_form_data(request_data):
-      """Parse form-urlencoded data from n8n workflow."""
-      try:
-                routes = request_data.get('routes', '[]')
-                devices = request_data.get('devices', '[]')
-                conduit = request_data.get('conduit', '[]')
+# ============================================================================
+# TRADE WHITE-LABEL CONFIGURATION
+# ============================================================================
 
-        # Handle both string and list formats
-                if isinstance(routes, str):
-                              routes = json.loads(routes) if routes else []
-                          if isinstance(devices, str):
-                                        devices = json.loads(devices) if devices else []
-                                    if isinstance(conduit, str):
-                                                  conduit = json.loads(conduit) if conduit else []
+TRADE_CONFIGS = {
+    "electrical": {
+        "name": "Electrical",
+        "primary_color": "#0066CC",
+        "secondary_color": "#003366",
+        "accent_color": "#FF9800"
+    },
+    "hvac": {
+        "name": "HVAC",
+        "primary_color": "#FF6B00",
+        "secondary_color": "#CC5500",
+        "accent_color": "#FFB84D"
+    },
+    "plumbing": {
+        "name": "Plumbing",
+        "primary_color": "#2196F3",
+        "secondary_color": "#1565C0",
+        "accent_color": "#64B5F6"
+    },
+    "flooring": {
+        "name": "Flooring",
+        "primary_color": "#8B4513",
+        "secondary_color": "#654321",
+        "accent_color": "#CD853F"
+    }
+}
 
-        return routes, devices, conduit
-except Exception as e:
-        logger.error(f"Error parsing form data: {str(e)}")
-        raise ValueError(f"Invalid form data: {str(e)}")
+def get_trade_config(trade_type):
+    """Get trade configuration, default to electrical"""
+    trade = trade_type.lower() if trade_type else "electrical"
+    return TRADE_CONFIGS.get(trade, TRADE_CONFIGS["electrical"])
 
-def generate_pdf_with_annotations(routes, devices, conduit):
-      """Generate PDF with electrical routing, device, and conduit annotations."""
+# ============================================================================
+# PDF GENERATION
+# ============================================================================
+
+def inject_trade_branding(html_content, trade_config):
+    """Inject trade-specific colors into HTML"""
+    # Replace color placeholders with trade-specific colors
+    html_content = html_content.replace("#0066CC", trade_config["primary_color"])
+    html_content = html_content.replace("#003366", trade_config["secondary_color"])
+    html_content = html_content.replace("#ff9800", trade_config["accent_color"])
+    return html_content
+
+def convert_html_to_pdf(html_content):
+    """Convert HTML to PDF using xhtml2pdf"""
     try:
-              # Create PDF in landscape orientation for better annotation space
-              buffer = BytesIO()
-              c = canvas.Canvas(buffer, pagesize=landscape(letter))
-              width, height = landscape(letter)
-
-        # Add header
-              c.setFont("Helvetica-Bold", 24)
-              c.drawString(0.5*inch, height - 0.5*inch, "AMPED Electrical Estimating Report")
-
-        # Add timestamp
-              c.setFont("Helvetica", 10)
-              timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-              c.drawString(0.5*inch, height - 0.75*inch, f"Generated: {timestamp}")
-
-        # Draw section divider
-              c.setLineWidth(1)
-              c.line(0.5*inch, height - 0.9*inch, width - 0.5*inch, height - 0.9*inch)
-
-        # Current vertical position for content
-              y_position = height - 1.2*inch
-              line_height = 0.2*inch
-              section_spacing = 0.3*inch
-
-        # ROUTES SECTION
-              if routes:
-                            c.setFont("Helvetica-Bold", 14)
-                            c.setFillColor(colors.HexColor("#1f4788"))
-                            c.drawString(0.5*inch, y_position, "ELECTRICAL ROUTES")
-                            y_position -= line_height
-
-            c.setFont("Helvetica", 10)
-            c.setFillColor(colors.black)
-
-            for idx, route in enumerate(routes, 1):
-                              route_text = f"Route {idx}: "
-                              if isinstance(route, dict):
-                                                    route_text += f"Type={route.get('type', 'Unknown')}, "
-                                                    route_text += f"Length={route.get('length', 'N/A')}ft, "
-                                                    route_text += f"Conduit={route.get('conduit', 'N/A')}"
-else:
-                    route_text += str(route)
-
-                c.drawString(0.75*inch, y_position, route_text)
-                y_position -= line_height
-
-            y_position -= section_spacing
-
-        # DEVICES SECTION
-        if devices:
-                      c.setFont("Helvetica-Bold", 14)
-                      c.setFillColor(colors.HexColor("#2d5016"))
-                      c.drawString(0.5*inch, y_position, "ELECTRICAL DEVICES")
-                      y_position -= line_height
-
-            c.setFont("Helvetica", 10)
-            c.setFillColor(colors.black)
-
-            for idx, device in enumerate(devices, 1):
-                              device_text = f"Device {idx}: "
-                              if isinstance(device, dict):
-                                                    device_text += f"Type={device.get('type', 'Unknown')}, "
-                                                    device_text += f"Qty={device.get('quantity', 'N/A')}, "
-                                                    device_text += f"Voltage={device.get('voltage', 'N/A')}V"
-else:
-                    device_text += str(device)
-
-                c.drawString(0.75*inch, y_position, device_text)
-                y_position -= line_height
-
-            y_position -= section_spacing
-
-        # CONDUIT SECTION
-        if conduit:
-                      c.setFont("Helvetica-Bold", 14)
-                      c.setFillColor(colors.HexColor("#8b4513"))
-                      c.drawString(0.5*inch, y_position, "CONDUIT SCHEDULE")
-                      y_position -= line_height
-
-            c.setFont("Helvetica", 10)
-            c.setFillColor(colors.black)
-
-            for idx, conduit_item in enumerate(conduit, 1):
-                              conduit_text = f"Conduit {idx}: "
-                              if isinstance(conduit_item, dict):
-                                                    conduit_text += f"Size={conduit_item.get('size', 'Unknown')}, "
-                                                    conduit_text += f"Type={conduit_item.get('type', 'N/A')}, "
-                                                    conduit_text += f"Length={conduit_item.get('length', 'N/A')}ft"
-else:
-                    conduit_text += str(conduit_item)
-
-                c.drawString(0.75*inch, y_position, conduit_text)
-                y_position -= line_height
-
-            y_position -= section_spacing
-
-        # Add summary section
-        c.setLineWidth(1)
-        c.line(0.5*inch, y_position, width - 0.5*inch, y_position)
-        y_position -= section_spacing
-
-        c.setFont("Helvetica-Bold", 12)
-        c.setFillColor(colors.HexColor("#1f4788"))
-        c.drawString(0.5*inch, y_position, "SUMMARY")
-        y_position -= line_height
-
-        c.setFont("Helvetica", 10)
-        c.setFillColor(colors.black)
-        c.drawString(0.75*inch, y_position, f"Total Routes: {len(routes)}")
-        y_position -= line_height
-        c.drawString(0.75*inch, y_position, f"Total Devices: {len(devices)}")
-        y_position -= line_height
-        c.drawString(0.75*inch, y_position, f"Total Conduit Items: {len(conduit)}")
-
-        # Save and return PDF
-        c.save()
-        buffer.seek(0)
-        return buffer
-
-except Exception as e:
-        logger.error(f"Error generating PDF: {str(e)}")
+        # Create PDF buffer
+        pdf_buffer = io.BytesIO()
+        
+        # Convert HTML to PDF
+        pisa_status = pisa.CreatePDF(
+            html_content,
+            dest=pdf_buffer,
+            encoding='utf-8'
+        )
+        
+        if pisa_status.err:
+            raise Exception(f"PDF conversion error: {pisa_status.err}")
+        
+        pdf_buffer.seek(0)
+        return pdf_buffer
+        
+    except Exception as e:
+        logger.error(f"HTML to PDF conversion failed: {str(e)}")
         raise
+
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
 
 @app.route('/health', methods=['GET'])
 def health_check():
-      """Health check endpoint for Railway monitoring."""
-    return jsonify({"status": "healthy", "service": "amped-pdf-generator"}), 200
+    """Health check endpoint for Railway"""
+    return jsonify({
+        "status": "healthy",
+        "service": "AMPED PDF Generator",
+        "version": "3.0.0",
+        "timestamp": datetime.now().isoformat()
+    }), 200
 
 @app.route('/generate-pdf', methods=['POST'])
 def generate_pdf():
-      """Generate annotated PDF from electrical estimating data.
-
-              Expected form-urlencoded data:
-                  - routes: JSON array of route objects
-                      - devices: JSON array of device objects
-                          - conduit: JSON array of conduit objects
-                              """
+    """
+    Generate PDF from HTML content
+    
+    Expected JSON:
+    {
+        "htmlContent": "<html>...</html>",
+        "projectName": "Project Name",
+        "companyName": "Company Name",
+        "tradeType": "electrical|hvac|plumbing|flooring" (optional, defaults to electrical)
+    }
+    """
     try:
-              # Parse input data
-              routes, devices, conduit = parse_form_data(request.form)
-
-        logger.info(f"Generating PDF with {len(routes)} routes, {len(devices)} devices, {len(conduit)} conduit items")
-
-        # Generate PDF
-        pdf_buffer = generate_pdf_with_annotations(routes, devices, conduit)
-
-        # Return PDF file
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        # Extract data
+        html_content = data.get('htmlContent')
+        if not html_content:
+            return jsonify({"error": "Missing required field: htmlContent"}), 400
+        
+        project_name = data.get('projectName', 'Project')
+        company_name = data.get('companyName', 'AMPED')
+        trade_type = data.get('tradeType', 'electrical')
+        
+        # Get trade configuration
+        trade_config = get_trade_config(trade_type)
+        
+        # Inject trade-specific branding
+        branded_html = inject_trade_branding(html_content, trade_config)
+        
+        logger.info(f"Generating PDF for {company_name} - {project_name} ({trade_config['name']})")
+        
+        # Convert to PDF
+        pdf_buffer = convert_html_to_pdf(branded_html)
+        
+        # Generate filename
+        filename = f"{project_name.replace(' ', '_')}_{trade_config['name']}_Annotated.pdf"
+        
+        # Return PDF
         return send_file(
-                      pdf_buffer,
-                      mimetype='application/pdf',
-                      as_attachment=True,
-                      download_name=f'estimate_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf'
+            pdf_buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename
         )
-
-except ValueError as e:
+    
+    except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
         return jsonify({"error": str(e)}), 400
-except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        return jsonify({"error": "Internal server error", "details": str(e)}), 500
+    except Exception as e:
+        logger.error(f"PDF generation error: {str(e)}")
+        return jsonify({
+            "error": "PDF generation failed",
+            "details": str(e)
+        }), 500
 
-@app.route('/api/pdf-info', methods=['GET'])
-def pdf_info():
-      """API endpoint providing information about the PDF generator service."""
+@app.route('/api/info', methods=['GET'])
+def api_info():
+    """API information endpoint"""
     return jsonify({
-              "service": "AMPED PDF Generator",
-              "version": "1.0.0",
-              "endpoints": {
-                            "health": "/health",
-                            "generate_pdf": "/generate-pdf",
-                            "info": "/api/pdf-info"
-              },
-              "expected_fields": {
-                            "routes": "JSON array of electrical routes",
-                            "devices": "JSON array of electrical devices",
-                            "conduit": "JSON array of conduit specifications"
-              },
-              "content_type": "application/x-www-form-urlencoded"
+        "service": "AMPED PDF Generator",
+        "version": "3.0.0",
+        "endpoints": {
+            "health": "/health",
+            "generate_pdf": "/generate-pdf",
+            "info": "/api/info"
+        },
+        "supported_trades": list(TRADE_CONFIGS.keys()),
+        "expected_format": {
+            "htmlContent": "HTML string (required)",
+            "projectName": "string (optional)",
+            "companyName": "string (optional)",
+            "tradeType": "string (optional, defaults to 'electrical')"
+        }
     }), 200
 
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors"""
+    return jsonify({
+        "error": "Endpoint not found",
+        "available_endpoints": ["/health", "/generate-pdf", "/api/info"]
+    }), 404
+
+@app.errorhandler(500)
+def server_error(error):
+    """Handle 500 errors"""
+    logger.error(f"Server error: {str(error)}")
+    return jsonify({"error": "Internal server error"}), 500
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
 if __name__ == '__main__':
-      port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
