@@ -1,5 +1,4 @@
 Flask==3.0.0
 gunicorn==21.2.0
-xhtml2pdf==0.2.13
+weasyprint==62.3
 Werkzeug==3.0.1
-reportlab==4.0.7
